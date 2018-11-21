@@ -507,9 +507,6 @@ private:
 
     SystemImpl &_parent;
 
-    enum class State { NONE, SET_PARAM_BUSY, GET_PARAM_BUSY } _state = State::NONE;
-    std::mutex _state_mutex{};
-
     // Params can be up to 16 chars without 0-termination.
     static constexpr size_t PARAM_ID_LEN = 16;
 
@@ -519,6 +516,7 @@ private:
         ParamValue param_value{};
         bool extended = false;
         int retries_done = 0;
+        bool already_requested{false};
     };
 
     LockedQueue<SetParamWork> _set_param_queue{};
@@ -529,6 +527,7 @@ private:
         ParamValue param_value_type{};
         bool extended = false;
         int retries_done = 0;
+        bool already_requested{false};
     };
     LockedQueue<GetParamWork> _get_param_queue{};
 
