@@ -125,3 +125,29 @@ TEST(LockedQueue, ChangeValue)
         locked_queue.pop_front(queue_lock);
     }
 }
+
+TEST(LockedQueue, MissedReturn)
+{
+    struct Item {
+        int value{42};
+    };
+
+    LockedQueue<Item> locked_queue{};
+
+    Item one;
+
+    locked_queue.push_back(one);
+
+    {
+        std::unique_lock<std::mutex> queue_lock;
+        auto borrowed_item = locked_queue.borrow_front(queue_lock);
+        //Intentionally no pop_front or return_front to check if queue_lock is unlocked automatically
+        //in the destructor at the end of this block
+    }
+
+    {
+        std::unique_lock<std::mutex> queue_lock;
+        auto borrowed_item = locked_queue.borrow_front(queue_lock);
+        locked_queue.pop_front(queue_lock);
+    }
+}
