@@ -20,34 +20,30 @@ public:
 
     // This allows to get access to the front and keep others
     // from using it. This blocks if the front is already borrowed.
-    std::shared_ptr<T> borrow_front()
+    std::shared_ptr<T> borrow_front(std::unique_lock<std::mutex> &queue_lock)
     {
-        _mutex.lock();
-        // Should not be possible because _mutex.lock()
-        assert(_queue_borrowed == false); // double borrow
+        assert(queue_lock.owns_lock() == false); // double borrow
+        queue_lock = std::unique_lock<std::mutex>(_mutex);
         if (_queue.size() == 0) {
             // We couldn't borrow anything, therefore don't keep the lock.
-            _mutex.unlock();
+            queue_lock.unlock();
             return nullptr;
         }
-        _queue_borrowed = true;
         return _queue.front();
     }
 
     // This allows to return a borrowed queue.
-    void return_front()
+    void return_front(std::unique_lock<std::mutex> &queue_lock)
     {
-        assert(_queue_borrowed == true); // return without borrow
-        _queue_borrowed = false;
-        _mutex.unlock();
+        assert(queue_lock.owns_lock() == true); // return without borrow
+        queue_lock.unlock();
     }
 
-    void pop_front()
+    void pop_front(std::unique_lock<std::mutex> &queue_lock)
     {
-        assert(_queue_borrowed == true); // pop without borrow
+        assert(queue_lock.owns_lock() == true); // pop without borrow
         _queue.pop_front();
-        _queue_borrowed = false;
-        _mutex.unlock();
+        queue_lock.unlock();
     }
 
     size_t size()
@@ -59,7 +55,6 @@ public:
 private:
     std::deque<std::shared_ptr<T>> _queue{};
     std::mutex _mutex{};
-    bool _queue_borrowed = false;
 };
 
 } // namespace dronecode_sdk

@@ -129,7 +129,8 @@ void MAVLinkCommands::receive_command_ack(mavlink_message_t message)
 
     // LogDebug() << "We got an ack: " << command_ack.command;
 
-    auto work = _work_queue.borrow_front();
+    std::unique_lock<std::mutex> queue_lock;
+    auto work = _work_queue.borrow_front(queue_lock);
     if (!work) {
         return;
     }
@@ -138,41 +139,41 @@ void MAVLinkCommands::receive_command_ack(mavlink_message_t message)
         // If the command does not match with our current command, ignore it.
         LogWarn() << "Command ack " << int(command_ack.command)
                   << " not matching our current command: " << work->mavlink_command;
-        _work_queue.return_front();
+        _work_queue.return_front(queue_lock);
         return;
     }
 
     switch (command_ack.result) {
         case MAV_RESULT_ACCEPTED:
             _parent.unregister_timeout_handler(_timeout_cookie);
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::SUCCESS, 1.0f);
             break;
 
         case MAV_RESULT_DENIED:
             LogWarn() << "command denied (" << work->mavlink_command << ").";
             _parent.unregister_timeout_handler(_timeout_cookie);
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::COMMAND_DENIED, NAN);
             break;
 
         case MAV_RESULT_UNSUPPORTED:
             LogWarn() << "command unsupported (" << work->mavlink_command << ").";
             _parent.unregister_timeout_handler(_timeout_cookie);
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::COMMAND_DENIED, NAN);
             break;
 
         case MAV_RESULT_TEMPORARILY_REJECTED:
             LogWarn() << "command temporarily rejected (" << work->mavlink_command << ").";
             _parent.unregister_timeout_handler(_timeout_cookie);
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::COMMAND_DENIED, NAN);
             break;
 
         case MAV_RESULT_FAILED:
             _parent.unregister_timeout_handler(_timeout_cookie);
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::COMMAND_DENIED, NAN);
             break;
 
@@ -190,7 +191,7 @@ void MAVLinkCommands::receive_command_ack(mavlink_message_t message)
             _parent.register_timeout_handler(std::bind(&MAVLinkCommands::receive_timeout, this),
                                              work->retries_to_do * work->timeout_s,
                                              &_timeout_cookie);
-            _work_queue.return_front();
+            _work_queue.return_front(queue_lock);
             // FIXME: We can only call callbacks with promises once, so let's not do it
             //        on IN_PROGRESS.
             // call_callback(work->callback, Result::IN_PROGRESS, command_ack.progress /
@@ -199,7 +200,7 @@ void MAVLinkCommands::receive_command_ack(mavlink_message_t message)
 
         default:
             LogWarn() << "Received unknown ack.";
-            _work_queue.return_front();
+            _work_queue.return_front(queue_lock);
             break;
     }
 }
@@ -207,7 +208,8 @@ void MAVLinkCommands::receive_command_ack(mavlink_message_t message)
 void MAVLinkCommands::receive_timeout()
 {
     // If we're not waiting, we ignore this.
-    auto work = _work_queue.borrow_front();
+    std::unique_lock<std::mutex> queue_lock;
+    auto work = _work_queue.borrow_front(queue_lock);
 
     if (!work) {
         LogErr() << "Received timeout without item in queue.";
@@ -220,7 +222,7 @@ void MAVLinkCommands::receive_timeout()
                   << work->mavlink_command << ").";
         if (!_parent.send_message(work->mavlink_message)) {
             LogErr() << "connection send error in retransmit (" << work->mavlink_command << ").";
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::CONNECTION_ERROR, NAN);
 
         } else {
@@ -228,14 +230,14 @@ void MAVLinkCommands::receive_timeout()
             _parent.register_timeout_handler(std::bind(&MAVLinkCommands::receive_timeout, this),
                                              work->timeout_s,
                                              &_timeout_cookie);
-            _work_queue.return_front();
+            _work_queue.return_front(queue_lock);
         }
 
     } else {
         // We have tried retransmitting, giving up now.
         LogErr() << "Retrying failed (" << work->mavlink_command << ")";
 
-        _work_queue.pop_front();
+        _work_queue.pop_front(queue_lock);
 
         call_callback(work->callback, Result::TIMEOUT, NAN);
     }
@@ -243,7 +245,8 @@ void MAVLinkCommands::receive_timeout()
 
 void MAVLinkCommands::do_work()
 {
-    auto work = _work_queue.borrow_front();
+    std::unique_lock<std::mutex> queue_lock;
+    auto work = _work_queue.borrow_front(queue_lock);
     if (!work) {
         // Nothing to do.
         return;
@@ -253,17 +256,17 @@ void MAVLinkCommands::do_work()
         // LogDebug() << "sending it the first time (" << work->mavlink_command << ")";
         if (!_parent.send_message(work->mavlink_message)) {
             LogErr() << "connection send error (" << work->mavlink_command << ")";
-            _work_queue.pop_front();
+            _work_queue.pop_front(queue_lock);
             call_callback(work->callback, Result::CONNECTION_ERROR, NAN);
         } else {
             work->already_sent = true;
             _parent.register_timeout_handler(std::bind(&MAVLinkCommands::receive_timeout, this),
                                              work->timeout_s,
                                              &_timeout_cookie);
-            _work_queue.return_front();
+            _work_queue.return_front(queue_lock);
         }
     } else {
-        _work_queue.return_front();
+        _work_queue.return_front(queue_lock);
     }
 }
 
